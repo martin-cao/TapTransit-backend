@@ -50,6 +50,8 @@ func SetupRoutes(r *gin.Engine) {
 		cards := v1.Group("/cards")
 		{
 			cards.GET("", cardController.ListCards) // 查询卡片列表
+			cards.POST("/register", cardController.RegisterCard)
+			cards.POST("/state/batch", cardController.UploadCardStateBatch)
 		}
 
 		// 交易记录相关

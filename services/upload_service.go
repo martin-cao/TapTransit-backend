@@ -5,6 +5,7 @@ import (
 	"TapTransit-backend/utils"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -271,6 +272,9 @@ func (s *UploadService) processSingleTapMode(record BatchRecordRequest, route mo
 	if err := s.db.Create(&transaction).Error; err != nil {
 		return fmt.Errorf("保存交易记录失败: %w", err)
 	}
+	if err := s.applyCardBalance(record.CardID, -fareResult.ActualFare); err != nil {
+		fmt.Printf("更新卡片余额失败: %v\n", err)
+	}
 
 	return nil
 }
@@ -328,6 +332,9 @@ func (s *UploadService) processTapInOutMode(record BatchRecordRequest, route mod
 			if err := s.db.Save(&pendingTransaction).Error; err != nil {
 				return fmt.Errorf("更新交易记录失败: %w", err)
 			}
+			if err := s.applyCardBalance(record.CardID, -fareResult.ActualFare); err != nil {
+				fmt.Printf("更新卡片余额失败: %v\n", err)
+			}
 
 			return nil
 		} else {
@@ -377,6 +384,9 @@ func (s *UploadService) processTapInOutMode(record BatchRecordRequest, route mod
 			// 保存交易记录
 			if err := s.db.Create(&transaction).Error; err != nil {
 				return fmt.Errorf("保存交易记录失败: %w", err)
+			}
+			if err := s.applyCardBalance(record.CardID, -fareResult.ActualFare); err != nil {
+				fmt.Printf("更新卡片余额失败: %v\n", err)
 			}
 
 			return nil
@@ -444,4 +454,27 @@ func (s *UploadService) inferRouteFromStation(stationID uint) (uint, error) {
 		return 0, err
 	}
 	return routeStation.RouteID, nil
+}
+
+// applyCardBalance 根据交易更新卡片余额（余额不足时冻结卡片）。
+func (s *UploadService) applyCardBalance(cardID string, delta float64) error {
+	if delta == 0 {
+		return nil
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var card models.Card
+		if err := tx.Where("card_id = ?", cardID).First(&card).Error; err != nil {
+			return err
+		}
+		currentCents := int64(math.Round(card.Balance * 100.0))
+		deltaCents := int64(math.Round(delta * 100.0))
+		newCents := currentCents + deltaCents
+		updates := map[string]interface{}{}
+		if newCents < 0 {
+			newCents = 0
+			updates["status"] = "blocked"
+		}
+		updates["balance"] = float64(newCents) / 100.0
+		return tx.Model(&card).Updates(updates).Error
+	})
 }
