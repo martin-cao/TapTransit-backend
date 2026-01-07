@@ -42,9 +42,10 @@ func (c *TransactionController) GetTransactions(ctx *gin.Context) {
 		pageSize = 20
 	}
 
+	// 构建基础查询
 	query := utils.DB.Model(&models.Transaction{})
 
-	// 日期筛选
+	// 日期筛选（按上车时间）
 	if dateStr != "" {
 		date, err := time.Parse("2006-01-02", dateStr)
 		if err == nil {
@@ -67,10 +68,12 @@ func (c *TransactionController) GetTransactions(ctx *gin.Context) {
 	}
 
 	var total int64
+	// 统计总数，用于分页
 	query.Count(&total)
 
 	var transactions []models.Transaction
 	offset := (page - 1) * pageSize
+	// 预加载关联信息，避免前端二次查询
 	query.Preload("Card").Preload("Route").
 		Order("board_time DESC").
 		Offset(offset).

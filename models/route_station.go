@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// RouteStation 线路与站点的关联关系（定义线路经过的站点顺序）
+// RouteStation 线路与站点的关联关系（定义线路经过的站点顺序与方向）。
 type RouteStation struct {
 	ID        uint           `gorm:"primaryKey" json:"id"`
 	CreatedAt time.Time      `json:"created_at"`
@@ -20,11 +20,12 @@ type RouteStation struct {
 	ZoneID     *string  `gorm:"size:50;index" json:"zone_id,omitempty"`          // 分区ID（用于分区/分段计价）
 	DistanceKm *float64 `gorm:"type:decimal(10,3)" json:"distance_km,omitempty"` // 到线路起点的累计距离（公里）
 
+	// 预加载用的关联结构，避免额外查询。
 	Route   Route   `gorm:"foreignKey:RouteID;references:ID" json:"route,omitempty"`
 	Station Station `gorm:"foreignKey:StationID;references:ID" json:"station,omitempty"`
 }
 
-// TableName 指定表名
+// TableName 指定表名，避免自动复数推断不一致。
 func (RouteStation) TableName() string {
 	return "route_stations"
 }

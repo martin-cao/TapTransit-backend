@@ -1,3 +1,4 @@
+// Package routes 负责定义 Gin 的路由分组与控制器绑定。
 package routes
 
 import (
@@ -8,14 +9,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SetupRoutes 设置所有路由
+// SetupRoutes 设置所有路由与 API 分组。
 func SetupRoutes(r *gin.Engine) {
-	// 初始化服务
+	// 初始化服务层（依赖全局 DB）
 	fareService := services.NewFareService(utils.DB)
 	uploadService := services.NewUploadService(utils.DB, fareService)
 	cardService := services.NewCardService(utils.DB)
 
-	// 初始化控制器
+	// 初始化控制器（封装业务与响应）
 	busController := controllers.NewBusController(uploadService)
 	cardController := controllers.NewCardController(cardService)
 	configController := controllers.NewConfigController()
@@ -23,7 +24,7 @@ func SetupRoutes(r *gin.Engine) {
 	routeController := controllers.NewRouteController()
 	authController := controllers.NewAuthController()
 
-	// API v1路由组
+	// API v1 路由组
 	v1 := r.Group("/api/v1")
 	{
 		// 认证相关

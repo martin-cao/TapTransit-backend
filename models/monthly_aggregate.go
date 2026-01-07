@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// MonthlyAggregate 月度累计金额（用于优化月度累计折扣计算）
+// MonthlyAggregate 月度累计金额（用于优化月度累计折扣计算）。
 type MonthlyAggregate struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	CardID      string    `gorm:"uniqueIndex:idx_card_month;not null;size:32;index" json:"card_id"` // 卡片ID
@@ -13,7 +13,7 @@ type MonthlyAggregate struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// TableName 指定表名
+// TableName 指定表名，避免自动复数推断不一致。
 func (MonthlyAggregate) TableName() string {
 	return "monthly_aggregates"
 }

@@ -30,6 +30,7 @@ func (c *ConfigController) GetRouteConfig(ctx *gin.Context) {
 		return
 	}
 
+	// 解析并校验 route_id
 	routeID, err := strconv.ParseUint(routeIDStr, 10, 32)
 	if err != nil {
 		utils.BadRequest(ctx, "route_id参数格式错误")
@@ -50,12 +51,13 @@ func (c *ConfigController) GetRouteConfig(ctx *gin.Context) {
 	var transfers []models.Transfer
 	utils.DB.Where("(from_route_id = ? OR to_route_id = ?) AND status = 'active'", routeID, routeID).Find(&transfers)
 
-	// 获取站点列表（通过RouteStation关联）
+	// 获取站点列表（通过 RouteStation 关联）
 	var routeStations []models.RouteStation
 	utils.DB.Where("route_id = ?", routeID).
 		Order("sequence ASC").
 		Find(&routeStations)
 
+	// 拉取站点基础信息，并按 ID 建索引
 	stationIDs := make([]uint, 0, len(routeStations))
 	for _, rs := range routeStations {
 		stationIDs = append(stationIDs, rs.StationID)
@@ -70,6 +72,7 @@ func (c *ConfigController) GetRouteConfig(ctx *gin.Context) {
 		}
 	}
 
+	// 输出结构对齐网关侧配置格式
 	stations := make([]map[string]interface{}, 0, len(routeStations))
 	for _, rs := range routeStations {
 		station, ok := stationsByID[rs.StationID]
@@ -85,6 +88,7 @@ func (c *ConfigController) GetRouteConfig(ctx *gin.Context) {
 		})
 	}
 
+	// 返回整条线路配置（站点、票价、换乘规则）
 	utils.Success(ctx, gin.H{
 		"route_id":   route.ID,
 		"route_name": route.Name,

@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Route 公交线路信息
+// Route 公交线路信息与计费模式配置。
 type Route struct {
 	ID        uint           `gorm:"primaryKey" json:"id"`
 	CreatedAt time.Time      `json:"created_at"`
@@ -22,7 +22,7 @@ type Route struct {
 	DirectionMode string  `gorm:"size:20;default:'both'" json:"direction_mode"` // 方向模式：single(单向), both(双向)
 }
 
-// TableName 指定表名
+// TableName 指定表名，避免自动复数推断不一致。
 func (Route) TableName() string {
 	return "routes"
 }

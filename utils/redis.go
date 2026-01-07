@@ -9,9 +9,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// RedisClient 为全局 Redis 连接句柄。
 var RedisClient *redis.Client
 
-// InitRedis 初始化Redis连接
+// InitRedis 初始化 Redis 连接并做 Ping 校验。
 func InitRedis(cfg *config.Config) (*redis.Client, error) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.GetRedisAddr(),
@@ -33,7 +34,7 @@ func InitRedis(cfg *config.Config) (*redis.Client, error) {
 	return rdb, nil
 }
 
-// GetCardMonthlyAmount 获取卡片当月累计金额
+// GetCardMonthlyAmount 获取卡片当月累计金额（不存在则返回 0）。
 func GetCardMonthlyAmount(cardID string) (float64, error) {
 	ctx := context.Background()
 	key := fmt.Sprintf("card:monthly:%s:%s", time.Now().Format("2006-01"), cardID)
@@ -44,35 +45,35 @@ func GetCardMonthlyAmount(cardID string) (float64, error) {
 	return val, err
 }
 
-// SetCardMonthlyAmount 设置卡片当月累计金额
+// SetCardMonthlyAmount 设置卡片当月累计金额，过期时间略大于一个月。
 func SetCardMonthlyAmount(cardID string, amount float64) error {
 	ctx := context.Background()
 	key := fmt.Sprintf("card:monthly:%s:%s", time.Now().Format("2006-01"), cardID)
 	return RedisClient.Set(ctx, key, amount, 32*24*time.Hour).Err() // 保存32天
 }
 
-// IncrementCardMonthlyAmount 增加卡片当月累计金额
+// IncrementCardMonthlyAmount 以增量方式更新当月累计金额。
 func IncrementCardMonthlyAmount(cardID string, amount float64) error {
 	ctx := context.Background()
 	key := fmt.Sprintf("card:monthly:%s:%s", time.Now().Format("2006-01"), cardID)
 	return RedisClient.IncrByFloat(ctx, key, amount).Err()
 }
 
-// GetCardOnboardInfo 获取卡片最近一次上车信息
+// GetCardOnboardInfo 获取卡片最近一次上车信息（用于换乘判断）。
 func GetCardOnboardInfo(cardID string) (string, error) {
 	ctx := context.Background()
 	key := fmt.Sprintf("card:onboard:%s", cardID)
 	return RedisClient.Get(ctx, key).Result()
 }
 
-// SetCardOnboardInfo 设置卡片上车信息（用于换乘判断）
+// SetCardOnboardInfo 设置卡片上车信息（用于换乘判断）。
 func SetCardOnboardInfo(cardID string, info string, ttl time.Duration) error {
 	ctx := context.Background()
 	key := fmt.Sprintf("card:onboard:%s", cardID)
 	return RedisClient.Set(ctx, key, info, ttl).Err()
 }
 
-// DeleteCardOnboardInfo 删除卡片上车信息
+// DeleteCardOnboardInfo 删除卡片上车信息。
 func DeleteCardOnboardInfo(cardID string) error {
 	ctx := context.Background()
 	key := fmt.Sprintf("card:onboard:%s", cardID)

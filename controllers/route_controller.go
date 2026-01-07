@@ -23,6 +23,7 @@ func NewRouteController() *RouteController {
 // @Router /api/v1/routes [get]
 func (c *RouteController) GetRoutes(ctx *gin.Context) {
 	var routes []models.Route
+	// 仅返回启用线路，避免前端展示无效数据
 	if err := utils.DB.Where("status = 'active'").Find(&routes).Error; err != nil {
 		utils.InternalServerError(ctx, "查询失败")
 		return

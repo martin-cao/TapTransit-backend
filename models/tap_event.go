@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// JSONB 用于PostgreSQL的JSONB类型
+// JSONB 用于 PostgreSQL 的 JSONB 类型映射。
 type JSONB map[string]interface{}
 
-// Value 实现driver.Valuer接口
+// Value 实现 driver.Valuer 接口，写入数据库。
 func (j JSONB) Value() (driver.Value, error) {
 	if j == nil {
 		return nil, nil
@@ -17,7 +17,7 @@ func (j JSONB) Value() (driver.Value, error) {
 	return json.Marshal(j)
 }
 
-// Scan 实现sql.Scanner接口
+// Scan 实现 sql.Scanner 接口，从数据库读取。
 func (j *JSONB) Scan(value interface{}) error {
 	if value == nil {
 		*j = nil
@@ -30,7 +30,7 @@ func (j *JSONB) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, j)
 }
 
-// TapEvent 刷卡事件记录（记录每次刷卡的原始事件，便于稽核与问题排查）
+// TapEvent 刷卡事件记录（保留原始事件，便于稽核与问题排查）。
 type TapEvent struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	RecordID    string    `gorm:"uniqueIndex;not null;size:100;index" json:"record_id"` // 记录ID（网关幂等键）
@@ -45,7 +45,7 @@ type TapEvent struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// TableName 指定表名
+// TableName 指定表名，避免自动复数推断不一致。
 func (TapEvent) TableName() string {
 	return "tap_events"
 }

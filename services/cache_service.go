@@ -1,3 +1,4 @@
+// Package services 聚合业务逻辑与定时任务。
 package services
 
 import (
@@ -9,9 +10,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// CacheService 配置数据缓存服务
+// CacheService 配置数据缓存服务（线路/站点/黑名单）。
 type CacheService struct {
-	db *gorm.DB
+	db *gorm.DB // 数据库连接
 
 	// 缓存数据
 	routesCache     map[uint]*models.Route
@@ -30,7 +31,7 @@ type CacheService struct {
 	cacheExpiryMinutes int
 }
 
-// NewCacheService 创建缓存服务
+// NewCacheService 创建缓存服务并设置默认缓存过期时间。
 func NewCacheService(db *gorm.DB) *CacheService {
 	return &CacheService{
 		db:                 db,
@@ -41,7 +42,7 @@ func NewCacheService(db *gorm.DB) *CacheService {
 	}
 }
 
-// GetRoute 获取线路信息（带缓存）
+// GetRoute 获取线路信息（带缓存，过期自动回源数据库）。
 func (s *CacheService) GetRoute(routeID uint) (*models.Route, error) {
 	s.routesMutex.RLock()
 	route, exists := s.routesCache[routeID]
@@ -59,7 +60,7 @@ func (s *CacheService) GetRoute(routeID uint) (*models.Route, error) {
 		return nil, fmt.Errorf("线路不存在: %w", err)
 	}
 
-	// 更新缓存
+	// 更新缓存（写锁）
 	s.routesMutex.Lock()
 	s.routesCache[routeID] = &routeModel
 	s.routesCacheTime = time.Now()
@@ -68,7 +69,7 @@ func (s *CacheService) GetRoute(routeID uint) (*models.Route, error) {
 	return &routeModel, nil
 }
 
-// GetStation 获取站点信息（带缓存）
+// GetStation 获取站点信息（带缓存，过期自动回源数据库）。
 func (s *CacheService) GetStation(stationID uint) (*models.Station, error) {
 	s.stationsMutex.RLock()
 	station, exists := s.stationsCache[stationID]
@@ -86,7 +87,7 @@ func (s *CacheService) GetStation(stationID uint) (*models.Station, error) {
 		return nil, fmt.Errorf("站点不存在: %w", err)
 	}
 
-	// 更新缓存
+	// 更新缓存（写锁）
 	s.stationsMutex.Lock()
 	s.stationsCache[stationID] = &stationModel
 	s.stationsCacheTime = time.Now()
@@ -95,7 +96,7 @@ func (s *CacheService) GetStation(stationID uint) (*models.Station, error) {
 	return &stationModel, nil
 }
 
-// IsBlacklisted 检查卡片是否在黑名单中（带缓存）
+// IsBlacklisted 检查卡片是否在黑名单中（带缓存）。
 func (s *CacheService) IsBlacklisted(cardID string) (bool, error) {
 	s.blacklistMutex.RLock()
 	isBlacklisted, exists := s.blacklistCache[cardID]
@@ -107,7 +108,7 @@ func (s *CacheService) IsBlacklisted(cardID string) (bool, error) {
 		return isBlacklisted, nil
 	}
 
-	// 从数据库加载（查询cards表中status为blocked或lost的卡片）
+	// 从数据库加载（查询 cards 表中 status 为 blocked/lost 的卡片）
 	var card models.Card
 	err := s.db.Where("card_id = ? AND (status = 'blocked' OR status = 'lost')", cardID).First(&card).Error
 	isBlacklisted = (err == nil) // 如果找到记录，说明在黑名单中
@@ -121,7 +122,7 @@ func (s *CacheService) IsBlacklisted(cardID string) (bool, error) {
 	return isBlacklisted, nil
 }
 
-// RefreshRoutesCache 刷新线路缓存
+// RefreshRoutesCache 刷新线路缓存（全量）。
 func (s *CacheService) RefreshRoutesCache() error {
 	var routes []models.Route
 	if err := s.db.Where("status = ?", "active").Find(&routes).Error; err != nil {
@@ -139,7 +140,7 @@ func (s *CacheService) RefreshRoutesCache() error {
 	return nil
 }
 
-// RefreshStationsCache 刷新站点缓存
+// RefreshStationsCache 刷新站点缓存（全量）。
 func (s *CacheService) RefreshStationsCache() error {
 	var stations []models.Station
 	if err := s.db.Find(&stations).Error; err != nil {
@@ -157,7 +158,7 @@ func (s *CacheService) RefreshStationsCache() error {
 	return nil
 }
 
-// RefreshBlacklistCache 刷新黑名单缓存
+// RefreshBlacklistCache 刷新黑名单缓存（全量）。
 func (s *CacheService) RefreshBlacklistCache() error {
 	var blockedCards []models.Card
 	if err := s.db.Where("status = ? OR status = ?", "blocked", "lost").Find(&blockedCards).Error; err != nil {
@@ -175,7 +176,7 @@ func (s *CacheService) RefreshBlacklistCache() error {
 	return nil
 }
 
-// StartCacheRefreshTask 启动缓存刷新定时任务
+// StartCacheRefreshTask 启动缓存刷新定时任务（定时全量刷新）。
 func (s *CacheService) StartCacheRefreshTask(intervalMinutes int) {
 	if intervalMinutes <= 0 {
 		intervalMinutes = 5 // 默认每5分钟刷新一次
@@ -188,6 +189,7 @@ func (s *CacheService) StartCacheRefreshTask(intervalMinutes int) {
 		s.RefreshStationsCache()
 		s.RefreshBlacklistCache()
 
+		// 周期刷新
 		for range ticker.C {
 			s.RefreshRoutesCache()
 			s.RefreshStationsCache()

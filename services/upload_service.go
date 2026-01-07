@@ -16,6 +16,7 @@ type UploadService struct {
 	fareService *FareService
 }
 
+// NewUploadService 创建记录上传服务。
 func NewUploadService(db *gorm.DB, fareService *FareService) *UploadService {
 	return &UploadService{
 		db:          db,
@@ -23,23 +24,24 @@ func NewUploadService(db *gorm.DB, fareService *FareService) *UploadService {
 	}
 }
 
-// BatchRecordRequest 网关上传的批量记录请求
+// BatchRecordRequest 网关上传的批量记录请求。
 type BatchRecordRequest struct {
-	RecordID      string    `json:"record_id"` // 记录ID（网关幂等键，可选，如果不提供则自动生成）
-	CardID        string    `json:"card_id" binding:"required"`
-	BoardTime     FlexibleTime `json:"board_time" binding:"required"`
-	BoardStation  string    `json:"board_station" binding:"required"`
-	AlightTime    *FlexibleTime `json:"alight_time"`
-	AlightStation string    `json:"alight_station"`
-	RouteID       uint      `json:"route_id"`
-	GatewayID     string    `json:"gateway_id"`
+	RecordID      string       `json:"record_id"`                   // 记录 ID（网关幂等键，可选）
+	CardID        string       `json:"card_id" binding:"required"`   // 卡片 UID
+	BoardTime     FlexibleTime `json:"board_time" binding:"required"`// 上车时间
+	BoardStation  string       `json:"board_station" binding:"required"` // 上车站点（名称或编号）
+	AlightTime    *FlexibleTime `json:"alight_time"`                // 下车时间（可选）
+	AlightStation string       `json:"alight_station"`              // 下车站点（可选）
+	RouteID       uint         `json:"route_id"`                    // 线路 ID（可选）
+	GatewayID     string       `json:"gateway_id"`                  // 网关设备 ID
 }
 
-// FlexibleTime supports unix seconds (number or string) and RFC3339.
+// FlexibleTime 支持 UNIX 秒（数字或字符串）与 RFC3339 时间格式。
 type FlexibleTime struct {
 	time.Time
 }
 
+// UnmarshalJSON 兼容多种时间格式的反序列化。
 func (t *FlexibleTime) UnmarshalJSON(b []byte) error {
 	if len(b) == 0 {
 		return nil
@@ -58,6 +60,7 @@ func (t *FlexibleTime) UnmarshalJSON(b []byte) error {
 	return t.parseString(string(b))
 }
 
+// parseString 解析时间字符串，支持 UNIX 秒与 RFC3339。
 func (t *FlexibleTime) parseString(value string) error {
 	if value == "" {
 		t.Time = time.Time{}
@@ -78,11 +81,12 @@ func (t *FlexibleTime) parseString(value string) error {
 	return fmt.Errorf("invalid time format: %s", value)
 }
 
-// UploadBatchRecords 批量上传乘车记录
+// UploadBatchRecords 批量上传乘车记录。
 func (s *UploadService) UploadBatchRecords(records []BatchRecordRequest) (int, error) {
 	var successCount int
 
 	for _, record := range records {
+		// 单条失败不影响整批处理
 		if err := s.processSingleRecord(record); err != nil {
 			// 记录错误但继续处理下一条
 			fmt.Printf("处理记录失败: %v, 错误: %v\n", record, err)
@@ -94,12 +98,12 @@ func (s *UploadService) UploadBatchRecords(records []BatchRecordRequest) (int, e
 	return successCount, nil
 }
 
-// processSingleRecord 处理单条记录
+// processSingleRecord 处理单条记录（解析站点、幂等、计费与入库）。
 func (s *UploadService) processSingleRecord(record BatchRecordRequest) error {
 	if record.BoardTime.IsZero() {
 		return fmt.Errorf("上车时间缺失")
 	}
-	// 解析站点信息（格式：线路ID-站点名称 或 站点ID）
+	// 解析站点信息（支持站点名称或站点编号）
 	startStationID, startStationName, err := s.parseStation(record.BoardStation)
 	if err != nil {
 		return fmt.Errorf("解析上车站点失败: %w", err)
@@ -114,7 +118,7 @@ func (s *UploadService) processSingleRecord(record BatchRecordRequest) error {
 		}
 	}
 
-	// 如果没有路由ID，尝试从站点推断
+	// 如果没有路由 ID，尝试从站点推断
 	routeID := record.RouteID
 	if routeID == 0 {
 		routeID, _ = s.inferRouteFromStation(startStationID)
@@ -147,7 +151,7 @@ func (s *UploadService) processSingleRecord(record BatchRecordRequest) error {
 		return fmt.Errorf("卡片状态异常: %s", card.Status)
 	}
 
-	// 检查重复刷卡（冷却时间10-30秒）
+	// 检查重复刷卡（冷却时间 10-30 秒）
 	var recentTransaction models.Transaction
 	boardTime := record.BoardTime.Time
 	var alightTime *time.Time
@@ -161,29 +165,29 @@ func (s *UploadService) processSingleRecord(record BatchRecordRequest) error {
 			Order("board_time DESC").
 			First(&recentTransaction).Error
 		if err == nil {
-			// 如果在30秒内有记录，检查是否在10秒内（认为是重复刷卡）
+			// 如果在 30 秒内有记录，检查是否在 10 秒内（认为是重复刷卡）
 			if boardTime.Sub(recentTransaction.BoardTime).Seconds() < 10 {
 				return nil // 重复刷卡，跳过
 			}
 		}
 	}
 
-	// 生成或使用RecordID（幂等键）
+	// 生成或使用 RecordID（幂等键）
 	recordID := record.RecordID
 	if recordID == "" {
-		// 如果网关没有提供RecordID，自动生成一个（格式：gatewayID_cardID_timestamp）
+		// 如果网关没有提供 RecordID，自动生成一个（格式：gatewayID_cardID_timestamp）
 		recordID = fmt.Sprintf("%s_%s_%d", record.GatewayID, record.CardID, boardTime.Unix())
 	}
 
-	// 检查RecordID是否已存在（幂等性检查）
+	// 检查 RecordID 是否已存在（幂等性检查）
 	var existingTransaction models.Transaction
 	err = s.db.Where("record_id = ?", recordID).First(&existingTransaction).Error
 	if err == nil {
-		// RecordID已存在，跳过处理（幂等性）
+		// RecordID 已存在，跳过处理（幂等性）
 		return nil
 	}
 
-	// 创建交易记录
+	// 创建交易记录（默认 pending，等待后续处理）
 	transaction := models.Transaction{
 		RecordID:         recordID,
 		CardID:           record.CardID,
@@ -196,17 +200,17 @@ func (s *UploadService) processSingleRecord(record BatchRecordRequest) error {
 		Status:           "pending",
 	}
 
-	// 根据线路的TapMode判断处理方式
+	// 根据线路的 TapMode 判断处理方式
 	if route.TapMode == "tap_in_out" {
-		// tap_in_out模式：需要下车刷卡
+		// tap_in_out 模式：需要下车刷卡
 		return s.processTapInOutMode(record, route, transaction, startStationID, startStationName, endStationID, endStationName, recordID, boardTime, alightTime)
 	} else {
-		// single_tap模式：上车即计费（默认或明确指定）
+		// single_tap 模式：上车即计费（默认或明确指定）
 		return s.processSingleTapMode(record, route, transaction, startStationID, startStationName, endStationID, endStationName, recordID, boardTime)
 	}
 }
 
-// parseStation 解析站点信息（简化版，实际可能需要更复杂的解析逻辑）
+// parseStation 解析站点信息（简化版，实际可扩展更多规则）。
 func (s *UploadService) parseStation(stationInfo string) (uint, string, error) {
 	// 尝试查找站点（通过station_id或name匹配）
 	var station models.Station
@@ -219,9 +223,9 @@ func (s *UploadService) parseStation(stationInfo string) (uint, string, error) {
 	return 0, stationInfo, fmt.Errorf("站点不存在: %s", stationInfo)
 }
 
-// processSingleTapMode 处理single_tap模式（上车即计费）
+// processSingleTapMode 处理 single_tap 模式（上车即计费）。
 func (s *UploadService) processSingleTapMode(record BatchRecordRequest, route models.Route, transaction models.Transaction, startStationID uint, startStationName string, endStationID uint, endStationName string, recordID string, boardTime time.Time) error {
-	// single_tap模式：上车即完成计费，不需要下车站点
+	// single_tap 模式：上车即完成计费，不需要下车站点
 	var endStationPtr *uint
 	if endStationID > 0 {
 		endStationPtr = &endStationID
@@ -229,7 +233,7 @@ func (s *UploadService) processSingleTapMode(record BatchRecordRequest, route mo
 		transaction.EndStationName = endStationName
 	}
 
-	// 记录TapEvent（上车刷卡）
+	// 记录 TapEvent（上车刷卡）
 	tapEventID := fmt.Sprintf("%s_tap_%d", recordID, boardTime.UnixNano())
 	if err := s.createTapEvent(tapEventID, record.CardID, route.ID, startStationID, startStationName, "tap_in", boardTime, record.GatewayID); err != nil {
 		fmt.Printf("记录TapEvent失败: %v\n", err)
@@ -271,19 +275,19 @@ func (s *UploadService) processSingleTapMode(record BatchRecordRequest, route mo
 	return nil
 }
 
-// processTapInOutMode 处理tap_in_out模式（需要下车刷卡）
+// processTapInOutMode 处理 tap_in_out 模式（需要下车刷卡）。
 func (s *UploadService) processTapInOutMode(record BatchRecordRequest, route models.Route, transaction models.Transaction, startStationID uint, startStationName string, endStationID uint, endStationName string, recordID string, boardTime time.Time, alightTime *time.Time) error {
-	// tap_in_out模式：如果有下车站点，查找pending交易并完成；否则生成pending交易
+	// tap_in_out 模式：有下车站点则完成 pending；否则生成 pending 交易
 	if alightTime != nil && endStationID > 0 {
-		// 有下车站点，查找该卡的pending交易
+		// 有下车站点，查找该卡的 pending 交易
 		var pendingTransaction models.Transaction
 		err := s.db.Where("card_id = ? AND status = ? AND route_id = ?", record.CardID, "pending", route.ID).
 			Order("board_time DESC").
 			First(&pendingTransaction).Error
 
 		if err == nil {
-			// 找到pending交易，更新为完成状态
-			// 记录TapEvent（下车刷卡，匹配pending交易）
+			// 找到 pending 交易，更新为完成状态
+			// 记录 TapEvent（下车刷卡，匹配 pending 交易）
 			tapEventID := fmt.Sprintf("%s_tapout_%d", pendingTransaction.RecordID, alightTime.UnixNano())
 			if err := s.createTapEvent(tapEventID, record.CardID, route.ID, endStationID, endStationName, "tap_out", *alightTime, record.GatewayID); err != nil {
 				fmt.Printf("记录TapEvent失败: %v\n", err)
@@ -293,7 +297,7 @@ func (s *UploadService) processTapInOutMode(record BatchRecordRequest, route mod
 			pendingTransaction.EndStationName = endStationName
 			pendingTransaction.AlightTime = alightTime
 
-			// 使用新的计费逻辑 CalculateFareV2（使用pending交易的上车站点信息）
+			// 使用新的计费逻辑 CalculateFareV2（使用 pending 交易的上车站点信息）
 			fareResult, err := s.fareService.CalculateFareV2(
 				record.CardID,
 				route.ID,
@@ -320,15 +324,15 @@ func (s *UploadService) processTapInOutMode(record BatchRecordRequest, route mod
 				}
 			}
 
-			// 更新pending交易为完成状态
+			// 更新 pending 交易为完成状态
 			if err := s.db.Save(&pendingTransaction).Error; err != nil {
 				return fmt.Errorf("更新交易记录失败: %w", err)
 			}
 
 			return nil
 		} else {
-			// 没有找到pending交易，可能是新的一次完整的上下车记录
-			// 记录TapEvent（上车和下车，一次性上报）
+			// 没有找到 pending 交易，可能是新的一次完整的上下车记录
+			// 记录 TapEvent（上车和下车，一次性上报）
 			tapEventInID := fmt.Sprintf("%s_tapin_%d", recordID, boardTime.UnixNano())
 			if err := s.createTapEvent(tapEventInID, record.CardID, route.ID, startStationID, startStationName, "tap_in", boardTime, record.GatewayID); err != nil {
 				fmt.Printf("记录TapEvent失败: %v\n", err)
@@ -378,8 +382,8 @@ func (s *UploadService) processTapInOutMode(record BatchRecordRequest, route mod
 			return nil
 		}
 	} else {
-		// 只有上车记录，生成pending交易（等待下车刷卡）
-		// 记录TapEvent（上车刷卡）
+		// 只有上车记录，生成 pending 交易（等待下车刷卡）
+		// 记录 TapEvent（上车刷卡）
 		tapEventID := fmt.Sprintf("%s_tapin_%d", recordID, boardTime.UnixNano())
 		if err := s.createTapEvent(tapEventID, record.CardID, route.ID, startStationID, startStationName, "tap_in", boardTime, record.GatewayID); err != nil {
 			fmt.Printf("记录TapEvent失败: %v\n", err)
@@ -389,21 +393,21 @@ func (s *UploadService) processTapInOutMode(record BatchRecordRequest, route mod
 		transaction.Fare = 0
 		transaction.ActualFare = 0
 
-		// 检查是否已有pending交易（同一张卡的pending交易）
+		// 检查是否已有 pending 交易（同一张卡）
 		var existingPending models.Transaction
 		err := s.db.Where("card_id = ? AND status = ? AND route_id = ?", record.CardID, "pending", route.ID).
 			Order("board_time DESC").
 			First(&existingPending).Error
 
 		if err == nil {
-			// 如果已有pending交易，可能需要处理重复刷卡的情况
-			// 这里简化处理：如果时间间隔很短（如30秒内），可能是重复刷卡，跳过
+			// 如果已有 pending 交易，可能是重复刷卡
+			// 这里简化处理：如果时间间隔很短（如 30 秒内），跳过
 			if boardTime.Sub(existingPending.BoardTime).Seconds() < 30 {
 				return nil // 重复刷卡，跳过
 			}
 		}
 
-		// 保存pending交易
+		// 保存 pending 交易
 		if err := s.db.Create(&transaction).Error; err != nil {
 			return fmt.Errorf("保存pending交易失败: %w", err)
 		}
@@ -412,7 +416,7 @@ func (s *UploadService) processTapInOutMode(record BatchRecordRequest, route mod
 	}
 }
 
-// createTapEvent 创建TapEvent记录
+// createTapEvent 创建 TapEvent 记录。
 func (s *UploadService) createTapEvent(recordID string, cardID string, routeID uint, stationID uint, stationName string, tapType string, tapTime time.Time, gatewayID string) error {
 	tapEvent := models.TapEvent{
 		RecordID:    recordID,
@@ -432,7 +436,7 @@ func (s *UploadService) createTapEvent(recordID string, cardID string, routeID u
 	return nil
 }
 
-// inferRouteFromStation 从站点推断线路
+// inferRouteFromStation 从站点推断线路。
 func (s *UploadService) inferRouteFromStation(stationID uint) (uint, error) {
 	var routeStation models.RouteStation
 	err := s.db.Where("station_id = ?", stationID).First(&routeStation).Error

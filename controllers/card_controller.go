@@ -9,9 +9,11 @@ import (
 )
 
 type CardController struct {
+	// 卡片相关业务封装
 	cardService *services.CardService
 }
 
+// CardProfileResponse 卡片信息 + 对应折扣策略（便于前端展示）。
 type CardProfileResponse struct {
 	models.Card
 	DiscountRate   *float64 `json:"discount_rate,omitempty"`
@@ -39,12 +41,14 @@ func (c *CardController) GetCard(ctx *gin.Context) {
 		return
 	}
 
+	// 查询卡片基础信息
 	card, err := c.cardService.GetCardByID(cardID)
 	if err != nil {
 		utils.NotFound(ctx, "卡片不存在")
 		return
 	}
 
+	// 叠加对应票种优惠信息
 	profile := CardProfileResponse{Card: *card}
 	if discount, err := c.cardService.GetCardDiscount(card.CardType); err == nil {
 		profile.DiscountRate = &discount.DiscountRate
@@ -70,6 +74,7 @@ func (c *CardController) ListCards(ctx *gin.Context) {
 	holderName := ctx.Query("userName")
 	status := ctx.Query("status")
 
+	// 组装筛选条件
 	filter := services.CardFilter{
 		CardID:     cardID,
 		CardNoLike: cardNo,
@@ -82,6 +87,7 @@ func (c *CardController) ListCards(ctx *gin.Context) {
 		utils.InternalServerError(ctx, "查询卡片失败")
 		return
 	}
+	// 逐张卡附加折扣信息（可能为空）
 	profiles := make([]CardProfileResponse, 0, len(cards))
 	for _, card := range cards {
 		profile := CardProfileResponse{Card: card}

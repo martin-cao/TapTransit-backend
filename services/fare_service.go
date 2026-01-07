@@ -13,11 +13,12 @@ type FareService struct {
 	db *gorm.DB
 }
 
+// NewFareService 创建计费服务。
 func NewFareService(db *gorm.DB) *FareService {
 	return &FareService{db: db}
 }
 
-// CalculateFare 计算单次乘车费用
+// CalculateFare 计算单次乘车费用（基础票价 + 各类优惠）。
 func (s *FareService) CalculateFare(cardID string, routeID uint, startStationID, endStationID uint, boardTime time.Time) (*FareCalculationResult, error) {
 	result := &FareCalculationResult{
 		BaseFare:       0,
@@ -34,7 +35,7 @@ func (s *FareService) CalculateFare(cardID string, routeID uint, startStationID,
 	result.BaseFare = baseFare
 	result.ActualFare = baseFare
 
-	// 2. 检查换乘优惠
+	// 2. 检查换乘优惠（仅在换乘规则命中时生效）
 	transferDiscount, transferType, err := s.checkTransferDiscount(cardID, routeID, startStationID, boardTime, baseFare)
 	if err == nil && transferDiscount > 0 {
 		result.DiscountAmount += transferDiscount
@@ -45,10 +46,10 @@ func (s *FareService) CalculateFare(cardID string, routeID uint, startStationID,
 		}
 	}
 
-	// 3. 检查月度累计折扣
+	// 3. 检查月度累计折扣（按基础票价计算折扣比例）
 	monthlyDiscount, monthlyType, err := s.checkMonthlyDiscount(cardID, baseFare)
 	if err == nil && monthlyDiscount > 0 {
-		// 如果已有换乘优惠，月度折扣在基础票价上计算，但实际优惠金额需要考虑已享受的换乘优惠
+		// 如果已有换乘优惠，月度折扣仍在基础票价上计算，实际金额叠加到优惠总额中。
 		discountAmount := baseFare * monthlyDiscount
 		result.DiscountAmount += discountAmount
 		if result.DiscountType != "" {
@@ -81,7 +82,7 @@ func (s *FareService) CalculateFare(cardID string, routeID uint, startStationID,
 	return result, nil
 }
 
-// calculateBaseFare 计算基础票价
+// calculateBaseFare 计算基础票价（不含任何优惠）。
 func (s *FareService) calculateBaseFare(routeID uint, startStationID, endStationID uint) (float64, error) {
 	// 先查找特定线路和站点的票价规则
 	var fare models.Fare
@@ -94,7 +95,7 @@ func (s *FareService) calculateBaseFare(routeID uint, startStationID, endStation
 		if fare.FareType == "uniform" {
 			return fare.BasePrice, nil
 		} else if fare.FareType == "segment" {
-			// 分段计价：需要计算站点间距离
+			// 分段计价：需要计算站点间区段数
 			segmentCount := s.calculateSegmentCount(routeID, startStationID, endStationID)
 			if segmentCount <= 0 {
 				return fare.BasePrice, nil
@@ -118,7 +119,7 @@ func (s *FareService) calculateBaseFare(routeID uint, startStationID, endStation
 	return 2.0, nil // 默认2元
 }
 
-// calculateSegmentCount 计算两个站点间的区段数
+// calculateSegmentCount 计算两个站点间的区段数。
 func (s *FareService) calculateSegmentCount(routeID uint, startStationID, endStationID uint) int {
 	var startRS, endRS models.RouteStation
 	s.db.Where("route_id = ? AND station_id = ?", routeID, startStationID).First(&startRS)
@@ -135,9 +136,9 @@ func (s *FareService) calculateSegmentCount(routeID uint, startStationID, endSta
 	return diff
 }
 
-// checkTransferDiscount 检查换乘优惠
+// checkTransferDiscount 检查换乘优惠（基于上一次下车信息）。
 func (s *FareService) checkTransferDiscount(cardID string, routeID uint, stationID uint, boardTime time.Time, baseFare float64) (float64, string, error) {
-	// 从Redis获取最近一次下车信息
+	// 从 Redis 获取最近一次下车信息
 	onboardInfo, err := utils.GetCardOnboardInfo(cardID)
 	if err != nil {
 		return 0, "", nil // 没有上车记录，不是换乘
@@ -177,7 +178,7 @@ func (s *FareService) checkTransferDiscount(cardID string, routeID uint, station
 	return transfer.DiscountAmount, "transfer", nil
 }
 
-// checkMonthlyDiscount 检查月度累计折扣（使用数据库）
+// checkMonthlyDiscount 检查月度累计折扣（使用数据库）。
 func (s *FareService) checkMonthlyDiscount(cardID string, currentAmountAfterDiscounts float64) (float64, string, error) {
 	// 从数据库获取当月累计金额（不包含本次交易）
 	currentAmount, err := utils.GetCurrentMonthAggregate(s.db, cardID)
@@ -192,9 +193,9 @@ func (s *FareService) checkMonthlyDiscount(cardID string, currentAmountAfterDisc
 		Order("threshold DESC"). // 从高到低排序
 		Find(&policies)
 
-	// 注意：设计文档要求按"扣除特殊票种和换乘优惠后的金额"累计
-	// 这里传入的currentAmountAfterDiscounts是本次交易扣除优惠后的金额，用于判断本次是否触发阈值
-	// currentAmount是之前已累计的金额
+	// 注意：设计文档要求按“扣除特殊票种和换乘优惠后的金额”累计。
+	// 这里传入的 currentAmountAfterDiscounts 是本次交易扣除优惠后的金额，用于判断是否触发阈值。
+	// currentAmount 是之前已累计的金额。
 
 	// 计算累计金额（之前累计 + 本次应付金额）
 	totalAmount := currentAmount + currentAmountAfterDiscounts
@@ -208,7 +209,7 @@ func (s *FareService) checkMonthlyDiscount(cardID string, currentAmountAfterDisc
 	return 0, "", nil
 }
 
-// checkCardTypeDiscount 检查卡类型折扣（学生卡、老人卡等）
+// checkCardTypeDiscount 检查卡类型折扣（学生卡、老人卡等）。
 func (s *FareService) checkCardTypeDiscount(cardID string, baseFare float64) (float64, string, error) {
 	var card models.Card
 	err := s.db.Where("card_id = ?", cardID).First(&card).Error
@@ -227,7 +228,7 @@ func (s *FareService) checkCardTypeDiscount(cardID string, baseFare float64) (fl
 	return policy.DiscountRate, card.CardType + "_discount", nil
 }
 
-// FareCalculationResult 计费结果
+// FareCalculationResult 计费结果（最终返回给业务层/前端）。
 type FareCalculationResult struct {
 	BaseFare       float64 `json:"base_fare"`       // 基础票价
 	DiscountAmount float64 `json:"discount_amount"` // 优惠金额
